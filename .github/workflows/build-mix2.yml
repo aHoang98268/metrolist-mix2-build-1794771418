@@ -20,30 +20,53 @@ jobs:
           echo "ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}" >> "$GITHUB_ENV"
           echo "${ANDROID_HOME:-/usr/local/lib/android/sdk}/platform-tools" >> "$GITHUB_PATH"
           echo "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "${ANDROID_HOME:-/usr/local/lib/android/sdk}/build-tools/35.0.0" >> "$GITHUB_PATH"
           export ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           if [ ! -x "$SDKMANAGER" ]; then
             SDKMANAGER=$(find "$ANDROID_HOME" -name sdkmanager -type f 2>/dev/null | head -n1)
           fi
-          echo "SDKMANAGER=$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses || true
-          "$SDKMANAGER" --install "platform-tools" "ndk;30.0.16248370" "cmake;4.1.2" || true
-          "$SDKMANAGER" --install "platforms;android-37" "build-tools;37.0.0" "build-tools;37.0.0-rc1" "build-tools;37.0.0-rc4" "platforms;android-36" "build-tools;36.0.0" "build-tools;35.0.0" || true
+          "$SDKMANAGER" --install "platform-tools" "ndk;30.0.16248370" "cmake;4.1.2" "build-tools;35.0.0" "build-tools;36.0.0" || true
+          "$SDKMANAGER" --install "platforms;android-37" "build-tools;37.0.0" "build-tools;37.0.0-rc1" "platforms;android-36" "platforms;android-35" || true
           yes | "$SDKMANAGER" --licenses || true
-          "$SDKMANAGER" --list_installed || true
-      - name: Build debug APK
+      - name: Build optimized release APK
         env:
-          GRADLE_OPTS: -Dorg.gradle.jvmargs="-Xmx3g -Dfile.encoding=UTF-8"
+          GRADLE_OPTS: -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8"
           ORG_GRADLE_PROJECT_org.gradle.workers.max: "2"
         run: |
           chmod +x ./gradlew
-          ./gradlew :androidApp:assembleDebug --no-daemon --stacktrace
-      - name: Collect APK
+          ./gradlew :androidApp:assembleRelease --no-daemon --stacktrace -x lintVitalRelease
+      - name: Sign APK if needed
         if: always()
+        shell: bash
         run: |
+          set -euxo pipefail
+          export ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -n1 || true)
+          APKSIGNER=""
+          ZIPALIGN=""
+          if [ -n "$BT" ]; then
+            APKSIGNER="$BT/apksigner"
+            ZIPALIGN="$BT/zipalign"
+          fi
           mkdir -p dist
-          find . -path "*build/outputs/apk*/*.apk" -print -exec cp {} dist/ \; || true
-          ls -la dist || true
+          find androidApp/build/outputs/apk -name "*.apk" -print || true
+          APK=$(find androidApp/build/outputs/apk/release -name "*.apk" | head -n1 || true)
+          if [ -z "$APK" ]; then APK=$(find androidApp/build/outputs/apk -name "*.apk" | head -n1 || true); fi
+          if [ -n "$APK" ]; then
+            mkdir -p ~/.android
+            if [ ! -f ~/.android/debug.keystore ]; then
+              keytool -genkeypair -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+            fi
+            OUT=dist/Metrolist-2-release-optimized.apk
+            cp "$APK" "$OUT"
+            if [ -x "$APKSIGNER" ]; then
+              "$APKSIGNER" sign --ks ~/.android/debug.keystore --ks-pass pass:android --key-pass pass:android "$OUT" || true
+              "$APKSIGNER" verify "$OUT" || true
+            fi
+            ls -la dist
+          fi
       - name: Upload APK
         if: always()
         uses: actions/upload-artifact@v4

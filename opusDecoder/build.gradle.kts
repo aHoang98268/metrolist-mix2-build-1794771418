@@ -82,6 +82,12 @@ abstract class BuildOpusJni
                 val buildDir = workDirectory.get().asFile.resolve(abi)
                 // Reconfiguring a stale tree for a new ANDROID_PLATFORM produced a larger library than a clean build.
                 fs.delete { delete(buildDir) }
+                val archFlags = if (abi == "arm64-v8a") {
+                    // Snapdragon 888 (Cortex-X1/A78): ARMv8.2-A with crypto/dotprod/fp16
+                    "-march=armv8.2-a+crypto+dotprod+fp16 -O3 -fomit-frame-pointer"
+                } else {
+                    "-O3 -fomit-frame-pointer"
+                }
                 exec.exec {
                     commandLine(
                         cmakeBin.resolve("cmake$executableSuffix"),
@@ -96,6 +102,8 @@ abstract class BuildOpusJni
                         "-DANDROID_ABI=$abi",
                         "-DANDROID_PLATFORM=android-${minSdk.get()}",
                         "-DCMAKE_BUILD_TYPE=Release",
+                        "-DCMAKE_C_FLAGS_RELEASE=$archFlags -DNDEBUG",
+                        "-DCMAKE_CXX_FLAGS_RELEASE=$archFlags -DNDEBUG",
                     )
                 }
                 exec.exec { commandLine(cmakeBin.resolve("cmake$executableSuffix"), "--build", buildDir, "--target", "opusV2JNI") }
